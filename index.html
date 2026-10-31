@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Refrain Pad">
+<meta name="theme-color" content="#121212">
+<title>Refrain Pad</title>
+<style>
+:root{
+  --bg:#121212; --panel:#1e1e1e; --panel2:#2a2a2a; --text:#f2f2f2; --muted:#a0a0a0;
+  --accent:#1ed760; --danger:#ff5a5a; --radius:16px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+body{min-height:100vh;padding-bottom:110px}
+header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;
+  padding:calc(12px + env(safe-area-inset-top)) 16px 12px;background:rgba(18,18,18,.92);
+  backdrop-filter:blur(10px);border-bottom:1px solid #222}
+header h1{font-size:20px;margin:0;flex:1;letter-spacing:-.3px}
+.chip{border:1px solid #333;background:var(--panel);color:var(--text);border-radius:999px;
+  padding:7px 12px;font-size:13px;cursor:pointer;max-width:45vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip.ok{border-color:var(--accent);color:var(--accent)}
+.iconbtn{background:var(--panel);border:1px solid #333;color:var(--text);width:38px;height:38px;
+  border-radius:50%;font-size:18px;cursor:pointer;display:grid;place-items:center;flex-shrink:0}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:16px}
+.tile{position:relative;height:118px;border-radius:var(--radius);padding:14px;cursor:pointer;overflow:hidden;
+  display:flex;flex-direction:column;justify-content:flex-end;user-select:none;
+  box-shadow:0 4px 14px rgba(0,0,0,.35);transition:transform .08s}
+.tile:active{transform:scale(.97)}
+.tile .t{font-weight:700;font-size:16px;line-height:1.2;overflow:hidden;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical}
+.tile .a{font-size:12px;opacity:.85;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .m{position:absolute;top:12px;left:14px;font-size:11px;opacity:.8;font-variant-numeric:tabular-nums}
+.tile .edit{position:absolute;top:6px;right:6px;width:32px;height:32px;border-radius:50%;border:none;
+  background:rgba(0,0,0,.25);color:#fff;font-size:15px;cursor:pointer}
+.tile .bar{position:absolute;left:0;bottom:0;height:5px;width:0;background:rgba(255,255,255,.9)}
+.tile.playing{outline:3px solid #fff;outline-offset:-3px}
+.tile.playing .m::before{content:"▶ "}
+.fab{position:fixed;right:20px;bottom:calc(24px + env(safe-area-inset-bottom));width:60px;height:60px;
+  border-radius:50%;border:none;background:var(--accent);color:#000;font-size:32px;font-weight:600;
+  box-shadow:0 6px 20px rgba(0,0,0,.5);cursor:pointer}
+.stopbtn{position:fixed;left:20px;bottom:calc(24px + env(safe-area-inset-bottom));height:52px;padding:0 20px;
+  border-radius:999px;border:none;background:#fff;color:#000;font-weight:700;font-size:15px;cursor:pointer;
+  box-shadow:0 6px 20px rgba(0,0,0,.5);display:none}
+.stopbtn.show{display:block}
+.empty{grid-column:1/-1;text-align:center;color:var(--muted);padding:50px 20px;line-height:1.6}
+.empty b{color:var(--text)}
+dialog{border:none;border-radius:20px;background:var(--panel);color:var(--text);width:min(520px,calc(100vw - 24px));
+  padding:20px;max-height:88vh}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+dialog h2{margin:0 0 14px;font-size:19px}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 5px}
+input{width:100%;padding:12px;border-radius:12px;border:1px solid #3a3a3a;background:var(--panel2);
+  color:var(--text);font-size:16px}
+input:focus{outline:2px solid var(--accent);border-color:transparent}
+.row{display:flex;gap:10px}.row>*{flex:1}
+.btn{border:none;border-radius:12px;padding:12px 14px;font-size:15px;font-weight:600;cursor:pointer;
+  background:var(--panel2);color:var(--text)}
+.btn.primary{background:var(--accent);color:#000}
+.btn.danger{background:transparent;color:var(--danger);border:1px solid #4a2a2a}
+.btn.block{width:100%;margin-top:10px}
+.actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+.actions .spacer{flex:1}
+.swatches{display:flex;gap:8px;flex-wrap:wrap}
+.sw{width:34px;height:34px;border-radius:50%;cursor:pointer;border:3px solid transparent}
+.sw.sel{border-color:#fff}
+.hint{font-size:13px;color:var(--muted);line-height:1.5;margin:8px 0}
+.hint code{background:var(--panel2);padding:2px 6px;border-radius:6px;color:var(--text);word-break:break-all}
+.devlist button{display:block;width:100%;text-align:left;margin-top:8px}
+.devlist .cur{outline:2px solid var(--accent)}
+#toast{position:fixed;left:50%;bottom:calc(100px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);
+  background:#333;color:#fff;padding:12px 16px;border-radius:12px;font-size:14px;max-width:calc(100vw - 32px);
+  opacity:0;pointer-events:none;transition:.25s;z-index:50;text-align:center}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎵 Refrain Pad</h1>
+  <button id="devChip" class="chip">Nicht verbunden</button>
+  <button id="settingsBtn" class="iconbtn" aria-label="Einstellungen">⚙</button>
+</header>
+
+<main id="grid"></main>
+
+<button id="stopBtn" class="stopbtn">■ Stopp</button>
+<button id="addBtn" class="fab" aria-label="Song hinzufügen">+</button>
+<div id="toast"></div>
+
+<!-- Song bearbeiten -->
+<dialog id="editDlg">
+  <h2 id="editTitle">Song hinzufügen</h2>
+  <button class="btn block" id="grabBtn">⤓ Gerade laufenden Song + Position übernehmen</button>
+  <p class="hint">Tipp: Song in Spotify an den Anfang des Refrains spulen, dann diesen Button drücken.</p>
+  <label>Spotify-Link</label>
+  <input id="fLink" placeholder="https://open.spotify.com/track/…" autocomplete="off">
+  <label>Titel</label>
+  <input id="fTitle" placeholder="Songname">
+  <label>Interpret (optional)</label>
+  <input id="fArtist" placeholder="Interpret">
+  <div class="row">
+    <div><label>Start (m:ss)</label><input id="fStart" placeholder="1:02" inputmode="decimal"></div>
+    <div><label>Dauer (Sek., 0 = durchlaufen)</label><input id="fDur" placeholder="30" inputmode="numeric"></div>
+  </div>
+  <label>Farbe</label>
+  <div class="swatches" id="swatches"></div>
+  <div class="actions">
+    <button class="btn danger" id="delBtn">Löschen</button>
+    <span class="spacer"></span>
+    <button class="btn" id="previewBtn">▶ Test</button>
+    <button class="btn" id="cancelBtn">Abbrechen</button>
+    <button class="btn primary" id="saveBtn">Speichern</button>
+  </div>
+</dialog>
+
+<!-- Einstellungen -->
+<dialog id="setDlg">
+  <h2>Einstellungen</h2>
+  <label>Spotify Client ID</label>
+  <input id="sClient" placeholder="aus dem Spotify Developer Dashboard" autocomplete="off">
+  <p class="hint">Diese Redirect-URI musst du in deiner Spotify-App eintragen:<br><code id="sRedirect"></code></p>
+  <button class="btn block" id="copyRedirect">Redirect-URI kopieren</button>
+  <button class="btn primary block" id="loginBtn">Mit Spotify verbinden</button>
+  <button class="btn block" id="logoutBtn">Abmelden</button>
+  <label>Songs sichern</label>
+  <div class="row">
+    <button class="btn" id="exportBtn">Exportieren</button>
+    <button class="btn" id="importBtn">Importieren</button>
+  </div>
+  <input type="file" id="importFile" accept="application/json,.json" hidden>
+  <div class="actions"><span class="spacer"></span><button class="btn" id="setClose">Schließen</button></div>
+</dialog>
+
+<!-- Geräte -->
+<dialog id="devDlg">
+  <h2>Abspielgerät</h2>
+  <p class="hint">Spotify muss auf dem Gerät geöffnet sein. Taucht es nicht auf, kurz dort einen Song starten und neu laden.</p>
+  <div class="devlist" id="devList"></div>
+  <div class="actions">
+    <button class="btn" id="devReload">↻ Neu laden</button>
+    <span class="spacer"></span>
+    <button class="btn" id="devClose">Schließen</button>
+  </div>
+</dialog>
+
+<script>
+(() => {
+"use strict";
+
+/* ---------- Speicher ---------- */
+const LS = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+
+const REDIRECT = location.origin + location.pathname;
+const SCOPES = "user-modify-playback-state user-read-playback-state user-read-currently-playing";
+const COLORS = ["#1db954","#e91e63","#ff7043","#ffb300","#7e57c2","#29b6f6","#26a69a","#ef5350","#8d6e63","#5c6bc0"];
+
+const S = {
+  clientId: LS.get("rp_client", ""),
+  tok: LS.get("rp_tok", null),
+  songs: LS.get("rp_songs", []),
+  deviceId: LS.get("rp_device", null),
+  deviceName: LS.get("rp_device_name", null),
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let toastT;
+function toast(msg, ms = 3200){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), ms);
+}
+const saveSongs = () => LS.set("rp_songs", S.songs);
+
+/* ---------- Zeit / Links ---------- */
+function parseTime(str){
+  str = String(str || "").trim().replace(",", ".");
+  if (!str) return 0;
+  if (str.includes(":")){
+    const [m, s] = str.split(":");
+    return (parseFloat(m) || 0) * 60 + (parseFloat(s) || 0);
+  }
+  return parseFloat(str) || 0;
+}
+function fmtTime(sec){
+  sec = Math.max(0, Math.round(sec * 10) / 10);
+  const m = Math.floor(sec / 60), s = sec - m * 60;
+  const ss = Number.isInteger(s) ? String(s).padStart(2, "0") : s.toFixed(1).padStart(4, "0");
+  return m + ":" + ss;
+}
+function parseTrack(link){
+  link = String(link || "").trim();
+  const m = link.match(/track[\/:]([A-Za-z0-9]{22})/);
+  if (m) return m[1];
+  if (/^[A-Za-z0-9]{22}$/.test(link)) return link;
+  return null;
+}
+
+/* ---------- Spotify Auth (PKCE) ---------- */
+function b64url(buf){
+  return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+async function login(){
+  if (!S.clientId){ toast("Erst die Client ID eintragen."); openSettings(); return; }
+  if (location.protocol !== "https:" && !/^(127\.0\.0\.1|\[::1\])$/.test(location.hostname)){
+    toast("Die App muss über https laufen (z. B. GitHub Pages), sonst klappt der Login nicht.", 5000);
+    return;
+  }
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+  const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+  LS.set("rp_verifier", verifier);
+  const p = new URLSearchParams({
+    client_id: S.clientId, response_type: "code", redirect_uri: REDIRECT,
+    code_challenge_method: "S256", code_challenge: challenge, scope: SCOPES
+  });
+  location.href = "https://accounts.spotify.com/authorize?" + p;
+}
+function saveTok(j){
+  S.tok = {
+    access: j.access_token,
+    refresh: j.refresh_token || (S.tok && S.tok.refresh),
+    exp: Date.now() + ((j.expires_in || 3600) - 60) * 1000
+  };
+  LS.set("rp_tok", S.tok);
+}
+async function tokenRequest(params){
+  const r = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: new URLSearchParams(params)
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error_description || j.error || ("HTTP " + r.status));
+  return j;
+}
+async function handleRedirect(){
+  const q = new URLSearchParams(location.search);
+  if (!q.has("code") && !q.has("error")) return;
+  history.replaceState(null, "", REDIRECT);
+  if (q.get("error")){ toast("Login abgebrochen: " + q.get("error")); return; }
+  try{
+    const j = await tokenRequest({
+      grant_type: "authorization_code", code: q.get("code"), redirect_uri: REDIRECT,
+      client_id: S.clientId, code_verifier: LS.get("rp_verifier", "")
+    });
+    saveTok(j); LS.del("rp_verifier");
+    toast("Mit Spotify verbunden ✓");
+  }catch(e){ toast("Login fehlgeschlagen: " + e.message, 5000); }
+}
+async function getToken(){
+  if (!S.tok) return null;
+  if (Date.now() < S.tok.exp) return S.tok.access;
+  if (!S.tok.refresh){ logout(true); return null; }
+  try{
+    saveTok(await tokenRequest({grant_type: "refresh_token", refresh_token: S.tok.refresh, client_id: S.clientId}));
+    return S.tok.access;
+  }catch(e){ logout(true); return null; }
+}
+function logout(silent){
+  S.tok = null; LS.del("rp_tok"); updateChip();
+  if (!silent) toast("Abgemeldet");
+}
+async function api(path, opts = {}){
+  const t = await getToken();
+  if (!t){ toast("Bitte erst mit Spotify verbinden (⚙)."); const e = new Error("noauth"); e.noauth = true; throw e; }
+  const r = await fetch("https://api.spotify.com/v1" + path, {
+    ...opts, headers: {Authorization: "Bearer " + t, "Content-Type": "application/json"}
+  });
+  const txt = await r.text();
+  let body = null; try{ body = txt ? JSON.parse(txt) : null; }catch(e){}
+  if (!r.ok){
+    const err = new Error((body && body.error && body.error.message) || ("HTTP " + r.status));
+    err.status = r.status; err.reason = body && body.error && body.error.reason;
+    throw err;
+  }
+  return body;
+}
+
+/* ---------- Geräte ---------- */
+function updateChip(){
+  const c = $("devChip");
+  if (!S.tok){ c.textContent = "Verbinden"; c.classList.remove("ok"); return; }
+  c.textContent = "🔊 " + (S.deviceName || "Automatisch");
+  c.classList.add("ok");
+}
+async function getDevices(){
+  const j = await api("/me/player/devices");
+  return (j && j.devices) || [];
+}
+async function autoPickDevice(){
+  const devs = await getDevices();
+  if (!devs.length) return null;
+  const d = devs.find(x => x.is_active) || devs[0];
+  S.deviceId = d.id; S.deviceName = d.name;
+  LS.set("rp_device", d.id); LS.set("rp_device_name", d.name);
+  updateChip();
+  return d;
+}
+async function openDevices(){
+  if (!S.tok){ login(); return; }
+  $("devDlg").showModal();
+  const list = $("devList");
+  list.innerHTML = '<p class="hint">Lade…</p>';
+  try{
+    const devs = await getDevices();
+    list.innerHTML = "";
+    const auto = document.createElement("button");
+    auto.className = "btn" + (!S.deviceId ? " cur" : "");
+    auto.textContent = "Automatisch (aktives Gerät)";
+    auto.onclick = () => { S.deviceId = null; S.deviceName = null; LS.del("rp_device"); LS.del("rp_device_name"); updateChip(); $("devDlg").close(); };
+    list.appendChild(auto);
+    if (!devs.length) list.insertAdjacentHTML("beforeend", '<p class="hint">Keine Geräte gefunden.</p>');
+    devs.forEach(d => {
+      const b = document.createElement("button");
+      b.className = "btn" + (d.id === S.deviceId ? " cur" : "");
+      b.textContent = (d.is_active ? "● " : "") + d.name + "  ·  " + d.type;
+      b.onclick = () => {
+        S.deviceId = d.id; S.deviceName = d.name;
+        LS.set("rp_device", d.id); LS.set("rp_device_name", d.name);
+        updateChip(); $("devDlg").close();
+      };
+      list.appendChild(b);
+    });
+  }catch(e){ if (!e.noauth) list.innerHTML = '<p class="hint">Fehler: ' + esc(e.message) + "</p>"; }
+}
+
+/* ---------- Abspielen ---------- */
+let stopTimer = null, activeId = null;
+
+async function startPlayback(song){
+  const q = S.deviceId ? "?device_id=" + encodeURIComponent(S.deviceId) : "";
+  await api("/me/player/play" + q, {
+    method: "PUT",
+    body: JSON.stringify({uris: ["spotify:track:" + song.track], position_ms: Math.round((song.start || 0) * 1000)})
+  });
+}
+async function play(song){
+  if (activeId === song.id){ stop(); return; }
+  clearTimeout(stopTimer);
+  try{
+    try{
+      await startPlayback(song);
+    }catch(e){
+      if (e.status === 404 || e.reason === "NO_ACTIVE_DEVICE"){
+        const d = await autoPickDevice();
+        if (!d){ toast("Kein Spotify-Gerät gefunden. Öffne Spotify auf Handy oder PC und probier's nochmal.", 5000); return; }
+        await startPlayback(song);
+      } else throw e;
+    }
+  }catch(e){
+    if (e.noauth) return;
+    if (e.status === 403) toast("Spotify blockt: " + e.message + " (Premium-Account verbunden?)", 5000);
+    else toast("Fehler: " + e.message, 4500);
+    return;
+  }
+  setActive(song);
+  if (song.dur > 0){
+    stopTimer = setTimeout(() => {
+      api("/me/player/pause", {method: "PUT"}).catch(() => {});
+      setActive(null);
+    }, song.dur * 1000);
+  }
+}
+function stop(){
+  clearTimeout(stopTimer);
+  api("/me/player/pause", {method: "PUT"}).catch(() => {});
+  setActive(null);
+}
+function setActive(song){
+  activeId = song ? song.id : null;
+  document.querySelectorAll(".tile").forEach(el => {
+    const on = el.dataset.id === activeId;
+    el.classList.toggle("playing", on);
+    const bar = el.querySelector(".bar");
+    bar.style.transition = "none"; bar.style.width = "0";
+    if (on && song.dur > 0){
+      void bar.offsetWidth;
+      bar.style.transition = "width " + song.dur + "s linear";
+      bar.style.width = "100%";
+    }
+  });
+  $("stopBtn").classList.toggle("show", !!activeId);
+}
+
+/* ---------- Kacheln ---------- */
+function render(){
+  const g = $("grid");
+  if (!S.songs.length){
+    g.innerHTML = '<div class="empty"><b>Noch keine Songs.</b><br>' +
+      (S.clientId ? "" : "1. Oben rechts ⚙ → Client ID eintragen &amp; verbinden<br>") +
+      "Mit <b>+</b> unten rechts einen Song anlegen.</div>";
+    return;
+  }
+  g.innerHTML = S.songs.map(s => `
+    <div class="tile${s.id === activeId ? " playing" : ""}" data-id="${esc(s.id)}"
+         style="background:linear-gradient(145deg, ${esc(s.color)}, ${esc(s.color)}aa)">
+      <div class="m">${fmtTime(s.start)}${s.dur > 0 ? " · " + s.dur + "s" : ""}</div>
+      <button class="edit" data-edit="${esc(s.id)}" aria-label="Bearbeiten">✎</button>
+      <div class="t">${esc(s.title || "Ohne Titel")}</div>
+      ${s.artist ? `<div class="a">${esc(s.artist)}</div>` : ""}
+      <div class="bar"></div>
+    </div>`).join("");
+}
+$("grid").addEventListener("click", e => {
+  const ed = e.target.closest("[data-edit]");
+  if (ed){ e.stopPropagation(); openEdit(ed.dataset.edit); return; }
+  const tile = e.target.closest(".tile");
+  if (tile){ const s = S.songs.find(x => x.id === tile.dataset.id); if (s) play(s); }
+});
+
+/* ---------- Bearbeiten ---------- */
+let editId = null, editColor = COLORS[0];
+function drawSwatches(){
+  $("swatches").innerHTML = COLORS.map(c =>
+    `<div class="sw${c === editColor ? " sel" : ""}" data-c="${c}" style="background:${c}"></div>`).join("");
+}
+$("swatches").addEventListener("click", e => {
+  const sw = e.target.closest(".sw"); if (!sw) return;
+  editColor = sw.dataset.c; drawSwatches();
+});
+function openEdit(id){
+  editId = id || null;
+  const s = id ? S.songs.find(x => x.id === id) : null;
+  $("editTitle").textContent = s ? "Song bearbeiten" : "Song hinzufügen";
+  $("fLink").value = s ? "https://open.spotify.com/track/" + s.track : "";
+  $("fTitle").value = s ? s.title : "";
+  $("fArtist").value = s ? (s.artist || "") : "";
+  $("fStart").value = s ? fmtTime(s.start) : "";
+  $("fDur").value = s ? s.dur : 30;
+  editColor = s ? s.color : COLORS[S.songs.length % COLORS.length];
+  drawSwatches();
+  $("delBtn").style.display = s ? "" : "none";
+  $("editDlg").showModal();
+}
+function formSong(){
+  const track = parseTrack($("fLink").value);
+  if (!track){ toast("Ungültiger Spotify-Link (muss ein Track-Link sein)."); return null; }
+  return {
+    id: editId || ("s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)),
+    track,
+    title: $("fTitle").value.trim(),
+    artist: $("fArtist").value.trim(),
+    start: parseTime($("fStart").value),
+    dur: Math.max(0, parseInt($("fDur").value, 10) || 0),
+    color: editColor
+  };
+}
+async function fillFromTrack(){
+  const id = parseTrack($("fLink").value);
+  if (!id || !S.tok || $("fTitle").value.trim()) return;
+  try{
+    const t = await api("/tracks/" + id);
+    if (t && !$("fTitle").value.trim()){
+      $("fTitle").value = t.name || "";
+      if (!$("fArtist").value.trim()) $("fArtist").value = (t.artists || []).map(a => a.name).join(", ");
+    }
+  }catch(e){ /* Titel dann einfach manuell eintragen */ }
+}
+$("fLink").addEventListener("change", fillFromTrack);
+$("fLink").addEventListener("blur", fillFromTrack);
+
+$("grabBtn").onclick = async () => {
+  try{
+    const j = await api("/me/player/currently-playing");
+    if (!j || !j.item){ toast("Gerade läuft nichts auf Spotify."); return; }
+    $("fLink").value = "https://open.spotify.com/track/" + j.item.id;
+    $("fTitle").value = j.item.name || "";
+    $("fArtist").value = (j.item.artists || []).map(a => a.name).join(", ");
+    $("fStart").value = fmtTime(Math.round((j.progress_ms || 0) / 100) / 10);
+    toast("Übernommen: " + j.item.name + " ab " + $("fStart").value);
+  }catch(e){ if (!e.noauth) toast("Fehler: " + e.message); }
+};
+$("saveBtn").onclick = () => {
+  const s = formSong(); if (!s) return;
+  if (!s.title) s.title = "Song " + (S.songs.length + 1);
+  const i = S.songs.findIndex(x => x.id === s.id);
+  if (i >= 0) S.songs[i] = s; else S.songs.push(s);
+  saveSongs(); render(); $("editDlg").close();
+};
+$("previewBtn").onclick = () => { const s = formSong(); if (s){ activeId = null; play(s); } };
+$("delBtn").onclick = () => {
+  if (!confirm("Song wirklich löschen?")) return;
+  S.songs = S.songs.filter(x => x.id !== editId);
+  saveSongs(); render(); $("editDlg").close();
+};
+$("cancelBtn").onclick = () => $("editDlg").close();
+
+/* ---------- Einstellungen ---------- */
+function openSettings(){
+  $("sClient").value = S.clientId;
+  $("sRedirect").textContent = REDIRECT;
+  $("logoutBtn").style.display = S.tok ? "" : "none";
+  $("loginBtn").textContent = S.tok ? "Neu verbinden" : "Mit Spotify verbinden";
+  $("setDlg").showModal();
+}
+$("sClient").addEventListener("input", () => { S.clientId = $("sClient").value.trim(); LS.set("rp_client", S.clientId); });
+$("copyRedirect").onclick = async () => {
+  try{ await navigator.clipboard.writeText(REDIRECT); toast("Kopiert ✓"); }
+  catch(e){ toast(REDIRECT, 6000); }
+};
+$("loginBtn").onclick = login;
+$("logoutBtn").onclick = () => { logout(); $("setDlg").close(); };
+$("setClose").onclick = () => { $("setDlg").close(); render(); };
+$("exportBtn").onclick = () => {
+  const blob = new Blob([JSON.stringify(S.songs, null, 2)], {type: "application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "refrain-pad-songs.json"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+$("importBtn").onclick = () => $("importFile").click();
+$("importFile").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try{
+    const arr = JSON.parse(await f.text());
+    if (!Array.isArray(arr)) throw new Error("Format");
+    const ok = arr.filter(s => s && s.track && s.id);
+    S.songs = ok; saveSongs(); render();
+    toast(ok.length + " Songs importiert ✓");
+  }catch(err){ toast("Datei konnte nicht gelesen werden."); }
+  e.target.value = "";
+};
+
+/* ---------- Start ---------- */
+$("settingsBtn").onclick = openSettings;
+$("devChip").onclick = () => S.tok ? openDevices() : (S.clientId ? login() : openSettings());
+$("devReload").onclick = openDevices;
+$("devClose").onclick = () => $("devDlg").close();
+$("addBtn").onclick = () => openEdit(null);
+$("stopBtn").onclick = stop;
+
+(async () => {
+  await handleRedirect();
+  updateChip();
+  render();
+})();
+})();
+</script>
+</body>
+</html>
