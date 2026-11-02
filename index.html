@@ -41,6 +41,9 @@ header h1{font-size:20px;margin:0;flex:1;letter-spacing:-.3px}
 .tile .bar{position:absolute;left:0;bottom:0;height:5px;width:0;background:rgba(255,255,255,.9)}
 .tile.playing{outline:3px solid #fff;outline-offset:-3px}
 .tile.playing .m::before{content:"▶ "}
+.tile.loading{outline:3px dashed rgba(255,255,255,.8);outline-offset:-3px;animation:pulse .7s ease-in-out infinite alternate}
+.tile.loading .m::before{content:"⏳ "}
+@keyframes pulse{from{filter:brightness(1)}to{filter:brightness(1.35)}}
 .fab{position:fixed;right:20px;bottom:calc(24px + env(safe-area-inset-bottom));width:60px;height:60px;
   border-radius:50%;border:none;background:var(--accent);color:#000;font-size:32px;font-weight:600;
   box-shadow:0 6px 20px rgba(0,0,0,.5);cursor:pointer}
@@ -74,16 +77,19 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
 .devlist button{display:block;width:100%;text-align:left;margin-top:8px}
 .devlist .cur{outline:2px solid var(--accent)}
 #toast{position:fixed;left:50%;bottom:calc(100px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);
-  background:#333;color:#fff;padding:12px 16px;border-radius:12px;font-size:14px;max-width:calc(100vw - 32px);
-  opacity:0;pointer-events:none;transition:.25s;z-index:50;text-align:center}
+  background:#333;color:#fff;padding:12px 16px;border-radius:12px;font-size:14px;width:max-content;max-width:calc(100vw - 32px);
+  opacity:0;pointer-events:none;transition:.25s;z-index:50;text-align:center;line-height:1.4}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.show.hasaction{pointer-events:auto}
+#toast button{display:block;margin:10px auto 0;border:none;border-radius:999px;background:var(--accent);color:#000;
+  font-weight:700;font-size:14px;padding:9px 16px;cursor:pointer}
 </style>
 </head>
 <body>
 
 <header>
   <h1>🎵 Refrain Pad</h1>
-  <button id="devChip" class="chip">Nicht verbunden</button>
+  <button id="devChip" class="chip">Verbinden</button>
   <button id="settingsBtn" class="iconbtn" aria-label="Einstellungen">⚙</button>
 </header>
 
@@ -122,6 +128,8 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
 <!-- Einstellungen -->
 <dialog id="setDlg">
   <h2>Einstellungen</h2>
+  <label>Ein- und Ausblenden (Sekunden, 0 = aus)</label>
+  <input id="sFade" inputmode="decimal" placeholder="3">
   <label>Spotify Client ID</label>
   <input id="sClient" placeholder="aus dem Spotify Developer Dashboard" autocomplete="off">
   <p class="hint">Diese Redirect-URI musst du in deiner Spotify-App eintragen:<br><code id="sRedirect"></code></p>
@@ -137,12 +145,13 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
   <div class="actions"><span class="spacer"></span><button class="btn" id="setClose">Schließen</button></div>
 </dialog>
 
-<!-- Geräte -->
+<!-- Handy wählen -->
 <dialog id="devDlg">
-  <h2>Abspielgerät</h2>
-  <p class="hint">Spotify muss auf dem Gerät geöffnet sein. Taucht es nicht auf, kurz dort einen Song starten und neu laden.</p>
+  <h2>Abspielgerät: Handy</h2>
+  <p class="hint">Gespielt wird immer über Spotify auf deinem Handy – also automatisch über Kopfhörer oder Bluetooth, wenn die gerade verbunden sind. Taucht dein Handy nicht auf, Spotify kurz öffnen und neu laden.</p>
   <div class="devlist" id="devList"></div>
   <div class="actions">
+    <button class="btn" id="devOpenSpotify">Spotify öffnen</button>
     <button class="btn" id="devReload">↻ Neu laden</button>
     <span class="spacer"></span>
     <button class="btn" id="devClose">Schließen</button>
@@ -168,18 +177,28 @@ const S = {
   clientId: LS.get("rp_client", ""),
   tok: LS.get("rp_tok", null),
   songs: LS.get("rp_songs", []),
-  deviceId: LS.get("rp_device", null),
-  deviceName: LS.get("rp_device_name", null),
+  fade: LS.get("rp_fade", 3),
 };
 
 const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let toastT;
-function toast(msg, ms = 3200){
-  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+function toast(msg, ms = 3200, action){
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.toggle("hasaction", !!action);
+  if (action){
+    const b = document.createElement("button");
+    b.textContent = action.label;
+    b.onclick = () => { t.classList.remove("show"); action.fn(); };
+    t.appendChild(b);
+  }
+  t.classList.add("show");
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), ms);
 }
 const saveSongs = () => LS.set("rp_songs", S.songs);
+const openSpotify = () => { location.href = "spotify:"; };
 
 /* ---------- Zeit / Links ---------- */
 function parseTime(str){
@@ -193,7 +212,7 @@ function parseTime(str){
 }
 function fmtTime(sec){
   sec = Math.max(0, Math.round(sec * 10) / 10);
-  const m = Math.floor(sec / 60), s = sec - m * 60;
+  const m = Math.floor(sec / 60), s = Math.round((sec - m * 60) * 10) / 10;
   const ss = Number.isInteger(s) ? String(s).padStart(2, "0") : s.toFixed(1).padStart(4, "0");
   return m + ":" + ss;
 }
@@ -256,14 +275,18 @@ async function handleRedirect(){
     toast("Mit Spotify verbunden ✓");
   }catch(e){ toast("Login fehlgeschlagen: " + e.message, 5000); }
 }
+let refreshing = null;
 async function getToken(){
   if (!S.tok) return null;
   if (Date.now() < S.tok.exp) return S.tok.access;
   if (!S.tok.refresh){ logout(true); return null; }
-  try{
-    saveTok(await tokenRequest({grant_type: "refresh_token", refresh_token: S.tok.refresh, client_id: S.clientId}));
-    return S.tok.access;
-  }catch(e){ logout(true); return null; }
+  if (!refreshing){
+    refreshing = tokenRequest({grant_type: "refresh_token", refresh_token: S.tok.refresh, client_id: S.clientId})
+      .then(j => { saveTok(j); return S.tok.access; })
+      .catch(() => { logout(true); return null; })
+      .finally(() => { refreshing = null; });
+  }
+  return refreshing;
 }
 function logout(silent){
   S.tok = null; LS.del("rp_tok"); updateChip();
@@ -273,7 +296,7 @@ async function api(path, opts = {}){
   const t = await getToken();
   if (!t){ toast("Bitte erst mit Spotify verbinden (⚙)."); const e = new Error("noauth"); e.noauth = true; throw e; }
   const r = await fetch("https://api.spotify.com/v1" + path, {
-    ...opts, headers: {Authorization: "Bearer " + t, "Content-Type": "application/json"}
+    ...opts, cache: "no-store", headers: {Authorization: "Bearer " + t, "Content-Type": "application/json"}
   });
   const txt = await r.text();
   let body = null; try{ body = txt ? JSON.parse(txt) : null; }catch(e){}
@@ -285,110 +308,219 @@ async function api(path, opts = {}){
   return body;
 }
 
-/* ---------- Geräte ---------- */
+/* ---------- Handy als festes Abspielgerät ---------- */
+let phone = LS.get("rp_phone", null);   // {id, name} – bevorzugtes Handy
+const isPhone = d => String(d && d.type || "").toLowerCase() === "smartphone";
+
 function updateChip(){
   const c = $("devChip");
   if (!S.tok){ c.textContent = "Verbinden"; c.classList.remove("ok"); return; }
-  c.textContent = "🔊 " + (S.deviceName || "Automatisch");
+  c.textContent = "📱 " + (phone ? phone.name : "Handy");
   c.classList.add("ok");
 }
 async function getDevices(){
   const j = await api("/me/player/devices");
   return (j && j.devices) || [];
 }
-async function autoPickDevice(){
-  const devs = await getDevices();
-  if (!devs.length) return null;
-  const d = devs.find(x => x.is_active) || devs[0];
-  S.deviceId = d.id; S.deviceName = d.name;
-  LS.set("rp_device", d.id); LS.set("rp_device_name", d.name);
-  updateChip();
+// Sucht das Handy unter den Spotify-Geräten (PC, Smart-Speaker usw. werden ignoriert)
+async function findPhone(){
+  const phones = (await getDevices()).filter(isPhone);
+  const preferred = phone && (phones.find(x => x.id === phone.id) || phones.find(x => x.name === phone.name));
+  const d = preferred || phones.find(x => x.is_active) || phones[0] || null;
+  if (d && (preferred || !phone)){
+    phone = {id: d.id, name: d.name}; LS.set("rp_phone", phone); updateChip();
+  }
   return d;
 }
+function noPhone(){
+  toast("Spotify auf dem Handy nicht gefunden. Öffne kurz Spotify, komm zurück und tippe nochmal.", 7000,
+        {label: "Spotify öffnen", fn: openSpotify});
+}
 async function openDevices(){
-  if (!S.tok){ login(); return; }
+  if (!S.tok){ S.clientId ? login() : openSettings(); return; }
   $("devDlg").showModal();
   const list = $("devList");
   list.innerHTML = '<p class="hint">Lade…</p>';
   try{
-    const devs = await getDevices();
+    const phones = (await getDevices()).filter(isPhone);
     list.innerHTML = "";
-    const auto = document.createElement("button");
-    auto.className = "btn" + (!S.deviceId ? " cur" : "");
-    auto.textContent = "Automatisch (aktives Gerät)";
-    auto.onclick = () => { S.deviceId = null; S.deviceName = null; LS.del("rp_device"); LS.del("rp_device_name"); updateChip(); $("devDlg").close(); };
-    list.appendChild(auto);
-    if (!devs.length) list.insertAdjacentHTML("beforeend", '<p class="hint">Keine Geräte gefunden.</p>');
-    devs.forEach(d => {
+    if (!phones.length) list.innerHTML = '<p class="hint">Kein Handy gefunden – Spotify auf dem Handy öffnen und neu laden.</p>';
+    phones.forEach(d => {
       const b = document.createElement("button");
-      b.className = "btn" + (d.id === S.deviceId ? " cur" : "");
-      b.textContent = (d.is_active ? "● " : "") + d.name + "  ·  " + d.type;
-      b.onclick = () => {
-        S.deviceId = d.id; S.deviceName = d.name;
-        LS.set("rp_device", d.id); LS.set("rp_device_name", d.name);
-        updateChip(); $("devDlg").close();
-      };
+      b.className = "btn" + (phone && d.id === phone.id ? " cur" : "");
+      b.textContent = "📱 " + d.name + (d.is_active ? "  · aktiv" : "");
+      b.onclick = () => { phone = {id: d.id, name: d.name}; LS.set("rp_phone", phone); updateChip(); $("devDlg").close(); };
       list.appendChild(b);
     });
   }catch(e){ if (!e.noauth) list.innerHTML = '<p class="hint">Fehler: ' + esc(e.message) + "</p>"; }
 }
 
-/* ---------- Abspielen ---------- */
-let stopTimer = null, activeId = null;
-
-async function startPlayback(song){
-  const q = S.deviceId ? "?device_id=" + encodeURIComponent(S.deviceId) : "";
-  await api("/me/player/play" + q, {
-    method: "PUT",
-    body: JSON.stringify({uris: ["spotify:track:" + song.track], position_ms: Math.round((song.start || 0) * 1000)})
-  });
+/* ---------- Lautstärke / Fades ---------- */
+let lastVol = null;
+let restoreVol = LS.get("rp_restore", null);   // Originallautstärke, falls ein Fade läuft
+function setRestore(v){ restoreVol = v; v == null ? LS.del("rp_restore") : LS.set("rp_restore", v); }
+async function setVol(devId, v){
+  v = Math.max(0, Math.min(100, Math.round(v)));
+  await api("/me/player/volume?volume_percent=" + v + "&device_id=" + encodeURIComponent(devId), {method: "PUT"});
+  lastVol = v;
 }
-async function play(song){
-  if (activeId === song.id){ stop(); return; }
-  clearTimeout(stopTimer);
-  try{
+// Lautstärke in Schritten von "from" nach "to"; bricht ab, sobald etwas anderes gestartet/gestoppt wird
+async function ramp(devId, from, to, secs, my){
+  const steps = Math.max(2, Math.round(secs * 3));
+  const t0 = performance.now(), stepMs = secs * 1000 / steps;
+  for (let i = 1; i <= steps; i++){
+    const wait = t0 + i * stepMs - performance.now();
+    if (wait > 0) await sleep(wait);
+    if (my !== session) return false;
+    try{ await setVol(devId, from + (to - from) * i / steps); }
+    catch(e){ if (e.status === 429) await sleep(800); }
+  }
+  return my === session;
+}
+let volHintShown = false;
+function noVolHint(){
+  if (volHintShown) return; volHintShown = true;
+  toast("Dein Handy erlaubt Spotify keine Lautstärke-Steuerung von außen – Ein-/Ausblenden ist daher aus.", 5500);
+}
+
+/* ---------- Abspielen ---------- */
+let session = 0, cur = null, timers = [];
+const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+
+// Wartet, bis Spotify wirklich an der Startposition spielt -> liefert den (lokalen) Startzeitpunkt
+async function waitForStart(song, my, t){
+  const startMs = Math.round((song.start || 0) * 1000), until = Date.now() + 10000;
+  while (Date.now() < until){
+    if (my !== session) return null;
     try{
-      await startPlayback(song);
-    }catch(e){
-      if (e.status === 404 || e.reason === "NO_ACTIVE_DEVICE"){
-        const d = await autoPickDevice();
-        if (!d){ toast("Kein Spotify-Gerät gefunden. Öffne Spotify auf Handy oder PC und probier's nochmal.", 5000); return; }
-        await startPlayback(song);
-      } else throw e;
+      const p = await api("/me/player");
+      if (p && p.is_playing && p.item && p.progress_ms >= startMs){
+        const idOk = p.item.id === song.track || (p.item.linked_from && p.item.linked_from.id === song.track);
+        if (idOk || p.progress_ms < startMs + 3000) return Date.now() - Math.min(3000, p.progress_ms - startMs);
+      }
+    }catch(e){}
+    await sleep(250);
+  }
+  return Date.now();
+}
+
+async function play(song){
+  if (cur && cur.song.id === song.id){ stop(); return; }
+  const my = ++session; clearTimers();
+  cur = {song};
+  setActive(song, "loading");
+  try{
+    const d = await findPhone();
+    if (my !== session) return;
+    if (!d){ cur = null; setActive(null); noPhone(); return; }
+
+    let fs = Math.max(0, Number(S.fade) || 0);
+    if (song.dur > 0) fs = Math.min(fs, song.dur / 2);
+    let fade = fs > 0 && d.supports_volume !== false;
+    if (fs > 0 && d.supports_volume === false) noVolHint();
+    const target = restoreVol != null ? restoreVol : (d.volume_percent != null ? d.volume_percent : 60);
+    if (fade){
+      try{ setRestore(target); await setVol(d.id, 0); }
+      catch(e){ fade = false; setRestore(null); if (e.status === 403) noVolHint(); }
+    }
+    if (my !== session) return;
+
+    await api("/me/player/play?device_id=" + encodeURIComponent(d.id), {
+      method: "PUT",
+      body: JSON.stringify({uris: ["spotify:track:" + song.track], position_ms: Math.round((song.start || 0) * 1000)})
+    });
+    if (my !== session){
+      if (!cur) cleanupAfterStop(d.id);   // wurde während des Startens gestoppt
+      return;
+    }
+
+    const t0 = await waitForStart(song, my);
+    if (t0 == null || my !== session) return;
+    const elapsed = Date.now() - t0;
+    cur = {song, dev: d.id, fade, target, fs};
+    setActive(song, "playing", elapsed);
+
+    if (fade) ramp(d.id, 0, target, fs, my).then(ok => { if (ok && !(song.dur > 0)) setRestore(null); });
+    if (song.dur > 0){
+      const left = song.dur * 1000 - elapsed;
+      timers.push(setTimeout(() => finish(my), Math.max(0, left - (fade ? fs * 1000 : 0))));
     }
   }catch(e){
+    if (my !== session) return;
+    cur = null; setActive(null);
+    if (restoreVol != null && phone) setVol(phone.id, restoreVol).then(() => setRestore(null)).catch(() => {});
     if (e.noauth) return;
-    if (e.status === 403) toast("Spotify blockt: " + e.message + " (Premium-Account verbunden?)", 5000);
+    if (e.status === 404 || e.reason === "NO_ACTIVE_DEVICE") noPhone();
+    else if (e.status === 403) toast("Spotify blockt: " + e.message + " (Premium-Account verbunden?)", 5000);
     else toast("Fehler: " + e.message, 4500);
-    return;
-  }
-  setActive(song);
-  if (song.dur > 0){
-    stopTimer = setTimeout(() => {
-      api("/me/player/pause", {method: "PUT"}).catch(() => {});
-      setActive(null);
-    }, song.dur * 1000);
   }
 }
+
+// Ende des Refrains: ausblenden -> pausieren -> Lautstärke zurück
+async function finish(my){
+  const c = cur;
+  if (!c || my !== session) return;
+  if (c.fade){
+    const ok = await ramp(c.dev, lastVol != null ? lastVol : c.target, 0, c.fs, my);
+    if (!ok) return;
+  }
+  await api("/me/player/pause?device_id=" + encodeURIComponent(c.dev), {method: "PUT"}).catch(() => {});
+  if (my !== session) return;
+  cur = null; setActive(null);
+  if (c.fade){
+    await sleep(400);
+    if (my !== session) return;
+    await setVol(c.dev, c.target).catch(() => {});
+    setRestore(null);
+  }
+}
+
+// Manueller Stopp: kurz ausblenden, pausieren, Lautstärke zurück
 function stop(){
-  clearTimeout(stopTimer);
-  api("/me/player/pause", {method: "PUT"}).catch(() => {});
-  setActive(null);
+  const c = cur, my = ++session;
+  clearTimers();
+  cur = null; setActive(null);
+  if (!c || !c.dev){ if (phone) cleanupAfterStop(phone.id); return; }
+  (async () => {
+    if (c.fade && lastVol != null && lastVol > 0) await ramp(c.dev, lastVol, 0, 0.6, my);
+    if (my !== session) return;
+    await api("/me/player/pause?device_id=" + encodeURIComponent(c.dev), {method: "PUT"}).catch(() => {});
+    if (c.fade){
+      await sleep(400);
+      if (my !== session) return;
+      await setVol(c.dev, c.target).catch(() => {});
+      setRestore(null);
+    }
+  })();
 }
-function setActive(song){
-  activeId = song ? song.id : null;
+async function cleanupAfterStop(devId){
+  const my = session;
+  await api("/me/player/pause?device_id=" + encodeURIComponent(devId), {method: "PUT"}).catch(() => {});
+  if (restoreVol != null){
+    await sleep(400);
+    if (my !== session) return;
+    await setVol(devId, restoreVol).catch(() => {});
+    setRestore(null);
+  }
+}
+
+function setActive(song, state, elapsedMs = 0){
+  const id = song ? song.id : null;
   document.querySelectorAll(".tile").forEach(el => {
-    const on = el.dataset.id === activeId;
-    el.classList.toggle("playing", on);
+    const on = el.dataset.id === id;
+    el.classList.toggle("loading", on && state === "loading");
+    el.classList.toggle("playing", on && state === "playing");
     const bar = el.querySelector(".bar");
     bar.style.transition = "none"; bar.style.width = "0";
-    if (on && song.dur > 0){
+    if (on && state === "playing" && song.dur > 0){
+      const done = Math.min(1, elapsedMs / (song.dur * 1000));
+      bar.style.width = (done * 100) + "%";
       void bar.offsetWidth;
-      bar.style.transition = "width " + song.dur + "s linear";
+      bar.style.transition = "width " + Math.max(0, song.dur - elapsedMs / 1000) + "s linear";
       bar.style.width = "100%";
     }
   });
-  $("stopBtn").classList.toggle("show", !!activeId);
+  $("stopBtn").classList.toggle("show", !!id);
 }
 
 /* ---------- Kacheln ---------- */
@@ -401,7 +533,7 @@ function render(){
     return;
   }
   g.innerHTML = S.songs.map(s => `
-    <div class="tile${s.id === activeId ? " playing" : ""}" data-id="${esc(s.id)}"
+    <div class="tile" data-id="${esc(s.id)}"
          style="background:linear-gradient(145deg, ${esc(s.color)}, ${esc(s.color)}aa)">
       <div class="m">${fmtTime(s.start)}${s.dur > 0 ? " · " + s.dur + "s" : ""}</div>
       <button class="edit" data-edit="${esc(s.id)}" aria-label="Bearbeiten">✎</button>
@@ -409,6 +541,7 @@ function render(){
       ${s.artist ? `<div class="a">${esc(s.artist)}</div>` : ""}
       <div class="bar"></div>
     </div>`).join("");
+  if (cur) setActive(cur.song, cur.dev ? "playing" : "loading");
 }
 $("grid").addEventListener("click", e => {
   const ed = e.target.closest("[data-edit]");
@@ -486,7 +619,7 @@ $("saveBtn").onclick = () => {
   if (i >= 0) S.songs[i] = s; else S.songs.push(s);
   saveSongs(); render(); $("editDlg").close();
 };
-$("previewBtn").onclick = () => { const s = formSong(); if (s){ activeId = null; play(s); } };
+$("previewBtn").onclick = () => { const s = formSong(); if (s) play(s); };
 $("delBtn").onclick = () => {
   if (!confirm("Song wirklich löschen?")) return;
   S.songs = S.songs.filter(x => x.id !== editId);
@@ -497,12 +630,18 @@ $("cancelBtn").onclick = () => $("editDlg").close();
 /* ---------- Einstellungen ---------- */
 function openSettings(){
   $("sClient").value = S.clientId;
+  $("sFade").value = S.fade;
   $("sRedirect").textContent = REDIRECT;
   $("logoutBtn").style.display = S.tok ? "" : "none";
   $("loginBtn").textContent = S.tok ? "Neu verbinden" : "Mit Spotify verbinden";
   $("setDlg").showModal();
 }
 $("sClient").addEventListener("input", () => { S.clientId = $("sClient").value.trim(); LS.set("rp_client", S.clientId); });
+$("sFade").addEventListener("input", () => {
+  const v = parseFloat(String($("sFade").value).replace(",", "."));
+  S.fade = isFinite(v) ? Math.max(0, Math.min(15, v)) : 0;
+  LS.set("rp_fade", S.fade);
+});
 $("copyRedirect").onclick = async () => {
   try{ await navigator.clipboard.writeText(REDIRECT); toast("Kopiert ✓"); }
   catch(e){ toast(REDIRECT, 6000); }
@@ -531,16 +670,28 @@ $("importFile").onchange = async e => {
 
 /* ---------- Start ---------- */
 $("settingsBtn").onclick = openSettings;
-$("devChip").onclick = () => S.tok ? openDevices() : (S.clientId ? login() : openSettings());
+$("devChip").onclick = openDevices;
 $("devReload").onclick = openDevices;
+$("devOpenSpotify").onclick = openSpotify;
 $("devClose").onclick = () => $("devDlg").close();
 $("addBtn").onclick = () => openEdit(null);
 $("stopBtn").onclick = stop;
+
+// Handy schon mal suchen; hängengebliebene Lautstärke (App mitten im Fade geschlossen) zurücksetzen
+async function warmUp(){
+  if (!S.tok) return;
+  try{
+    const d = await findPhone();
+    if (d && restoreVol != null && !cur){ await setVol(d.id, restoreVol); setRestore(null); }
+  }catch(e){}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") warmUp(); });
 
 (async () => {
   await handleRedirect();
   updateChip();
   render();
+  warmUp();
 })();
 })();
 </script>
