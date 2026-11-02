@@ -432,8 +432,9 @@ async function waitForStart(song, my, timeoutMs){
   }
   return false;   // Spotify hat (noch) nicht angefangen zu spielen
 }
+const pauseUrl = id => "/me/player/pause" + (id ? "?device_id=" + encodeURIComponent(id) : "");
 function sendPlay(song, devId){
-  return api("/me/player/play?device_id=" + encodeURIComponent(devId), {
+  return api("/me/player/play" + (devId ? "?device_id=" + encodeURIComponent(devId) : ""), {
     method: "PUT",
     body: JSON.stringify({uris: ["spotify:track:" + song.track], position_ms: Math.round((song.start || 0) * 1000)})
   });
@@ -445,14 +446,19 @@ async function play(song){
   cur = {song};
   setActive(song, "loading");
   try{
-    const d = await findPhone();
+    let d = await findPhone();
     if (my !== session) return;
-    if (!d){ cur = null; setActive(null); noPhone(); return; }
+    if (!d){
+      // iPhone verschwindet aus der Liste, wenn Spotify im Hintergrund schläft.
+      // Start ohne Geräte-ID -> Spotify nimmt das zuletzt aktive Gerät und weckt es auf.
+      dlog("Handy nicht in der Geräteliste – starte ohne Geräte-ID (zuletzt aktives Gerät)");
+      d = {id: null, name: "zuletzt aktives Gerät", supports_volume: false};
+    }
 
     let fs = Math.max(0, Number(S.fade) || 0);
     if (song.dur > 0) fs = Math.min(fs, song.dur / 2);
-    let fade = fs > 0 && d.supports_volume !== false;
-    if (fs > 0 && d.supports_volume === false) noVolHint();
+    let fade = fs > 0 && !!d.id && d.supports_volume !== false;
+    if (fs > 0 && d.id && d.supports_volume === false) noVolHint();
     const target = restoreVol != null ? restoreVol : (d.volume_percent != null ? d.volume_percent : 60);
     if (fade){
       try{ setRestore(target); await setVol(d.id, 0); }
@@ -461,14 +467,22 @@ async function play(song){
     if (my !== session) return;
 
     dlog("▶ Start: " + (song.title || song.track) + " auf " + d.name + (fade ? " (mit Fade)" : " (ohne Fade)"));
-    await sendPlay(song, d.id);
+    try{ await sendPlay(song, d.id); }
+    catch(e){
+      if (d.id && (e.status === 404 || e.reason === "NO_ACTIVE_DEVICE")){
+        dlog("Handy-ID abgelehnt – versuche ohne Geräte-ID");
+        if (fade && restoreVol != null){ await setVol(d.id, restoreVol).catch(() => {}); setRestore(null); }
+        fade = false; d = {id: null, name: "zuletzt aktives Gerät", supports_volume: false};
+        await sendPlay(song, null);
+      } else throw e;
+    }
     if (my !== session){
       if (!cur) cleanupAfterStop(d.id);   // wurde während des Startens gestoppt
       return;
     }
 
     let t0 = await waitForStart(song, my, 6000);
-    if (t0 === false && my === session){
+    if (t0 === false && my === session && d.id){
       // Spotify hat den Befehl angenommen, spielt aber nicht -> Handy explizit aktivieren und nochmal
       dlog("Spielt nicht – aktiviere Handy und versuche es erneut");
       await api("/me/player", {method: "PUT", body: JSON.stringify({device_ids: [d.id], play: false})}).catch(() => {});
@@ -487,7 +501,7 @@ async function play(song){
       return;
     }
     const elapsed = Date.now() - t0;
-    cur = {song, dev: d.id, fade, target, fs};
+    cur = {song, dev: d.id, fade, target, fs, started: true};
     setActive(song, "playing", elapsed);
 
     if (fade) ramp(d.id, 0, target, fs, my).then(ok => { if (ok && !(song.dur > 0)) setRestore(null); });
@@ -514,7 +528,7 @@ async function finish(my){
     const ok = await ramp(c.dev, lastVol != null ? lastVol : c.target, 0, c.fs, my);
     if (!ok) return;
   }
-  await api("/me/player/pause?device_id=" + encodeURIComponent(c.dev), {method: "PUT"}).catch(() => {});
+  await api(pauseUrl(c.dev), {method: "PUT"}).catch(() => {});
   if (my !== session) return;
   cur = null; setActive(null);
   if (c.fade){
@@ -530,11 +544,11 @@ function stop(){
   const c = cur, my = ++session;
   clearTimers();
   cur = null; setActive(null);
-  if (!c || !c.dev){ if (phone) cleanupAfterStop(phone.id); return; }
+  if (!c || !c.started){ cleanupAfterStop(null); return; }
   (async () => {
     if (c.fade && lastVol != null && lastVol > 0) await ramp(c.dev, lastVol, 0, 0.6, my);
     if (my !== session) return;
-    await api("/me/player/pause?device_id=" + encodeURIComponent(c.dev), {method: "PUT"}).catch(() => {});
+    await api(pauseUrl(c.dev), {method: "PUT"}).catch(() => {});
     if (c.fade){
       await sleep(400);
       if (my !== session) return;
@@ -545,7 +559,7 @@ function stop(){
 }
 async function cleanupAfterStop(devId){
   const my = session;
-  await api("/me/player/pause?device_id=" + encodeURIComponent(devId), {method: "PUT"}).catch(() => {});
+  await api(pauseUrl(devId), {method: "PUT"}).catch(() => {});
   if (restoreVol != null){
     await sleep(400);
     if (my !== session) return;
@@ -591,7 +605,7 @@ function render(){
       ${s.artist ? `<div class="a">${esc(s.artist)}</div>` : ""}
       <div class="bar"></div>
     </div>`).join("");
-  if (cur) setActive(cur.song, cur.dev ? "playing" : "loading");
+  if (cur) setActive(cur.song, cur.started ? "playing" : "loading");
 }
 $("grid").addEventListener("click", e => {
   const ed = e.target.closest("[data-edit]");
