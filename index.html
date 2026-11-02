@@ -142,7 +142,21 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
     <button class="btn" id="importBtn">Importieren</button>
   </div>
   <input type="file" id="importFile" accept="application/json,.json" hidden>
+  <button class="btn block" id="diagBtn">🔧 Diagnose anzeigen</button>
   <div class="actions"><span class="spacer"></span><button class="btn" id="setClose">Schließen</button></div>
+</dialog>
+
+<!-- Diagnose -->
+<dialog id="diagDlg">
+  <h2>Diagnose</h2>
+  <p class="hint">Was die App zuletzt mit Spotify gemacht hat. Bei Problemen: Kachel antippen, kurz warten, dann hier einen Screenshot machen.</p>
+  <pre id="diagText" style="white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.45;background:#111;padding:10px;border-radius:10px;max-height:55vh;overflow:auto;margin:0"></pre>
+  <div class="actions">
+    <button class="btn" id="diagDevices">Geräte abfragen</button>
+    <button class="btn" id="diagCopy">Kopieren</button>
+    <span class="spacer"></span>
+    <button class="btn" id="diagClose">Schließen</button>
+  </div>
 </dialog>
 
 <!-- Handy wählen -->
@@ -292,6 +306,12 @@ function logout(silent){
   S.tok = null; LS.del("rp_tok"); updateChip();
   if (!silent) toast("Abgemeldet");
 }
+const diag = [];
+function dlog(line){
+  const d = new Date();
+  diag.push(d.toTimeString().slice(0, 8) + "." + String(d.getMilliseconds()).padStart(3, "0") + "  " + line);
+  if (diag.length > 80) diag.shift();
+}
 async function api(path, opts = {}){
   const t = await getToken();
   if (!t){ toast("Bitte erst mit Spotify verbinden (⚙)."); const e = new Error("noauth"); e.noauth = true; throw e; }
@@ -300,6 +320,13 @@ async function api(path, opts = {}){
   });
   const txt = await r.text();
   let body = null; try{ body = txt ? JSON.parse(txt) : null; }catch(e){}
+  if (path === "/me/player" && (opts.method || "GET") === "GET"){
+    dlog("GET /me/player → " + r.status + (body ? " playing=" + body.is_playing + " pos=" + body.progress_ms +
+      " dev=" + (body.device && body.device.name) + " track=" + (body.item && body.item.id) : ""));
+  } else {
+    dlog((opts.method || "GET") + " " + path.split("?")[0] + " → " + r.status +
+      (!r.ok && body && body.error ? " " + (body.error.reason || "") + " " + body.error.message : ""));
+  }
   if (!r.ok){
     const err = new Error((body && body.error && body.error.message) || ("HTTP " + r.status));
     err.status = r.status; err.reason = body && body.error && body.error.reason;
@@ -320,7 +347,9 @@ function updateChip(){
 }
 async function getDevices(){
   const j = await api("/me/player/devices");
-  return (j && j.devices) || [];
+  const devs = (j && j.devices) || [];
+  dlog("Geräte: " + (devs.map(d => `${d.name} [${d.type}${d.is_active ? ", aktiv" : ""}${d.supports_volume === false ? ", keine Lautstärke" : ", vol " + d.volume_percent}]`).join(" | ") || "keine"));
+  return devs;
 }
 // Sucht das Handy unter den Spotify-Geräten (PC, Smart-Speaker usw. werden ignoriert)
 async function findPhone(){
@@ -377,10 +406,10 @@ async function ramp(devId, from, to, secs, my){
   }
   return my === session;
 }
-let volHintShown = false;
 function noVolHint(){
-  if (volHintShown) return; volHintShown = true;
-  toast("Dein Handy erlaubt Spotify keine Lautstärke-Steuerung von außen – Ein-/Ausblenden ist daher aus.", 5500);
+  if (LS.get("rp_volhint", false)) return;
+  LS.set("rp_volhint", true);
+  toast("Dein Handy erlaubt Spotify keine Lautstärke-Steuerung von außen – Ein-/Ausblenden ist daher aus. (Hinweis kommt nur einmal.)", 6000);
 }
 
 /* ---------- Abspielen ---------- */
@@ -388,8 +417,8 @@ let session = 0, cur = null, timers = [];
 const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
 
 // Wartet, bis Spotify wirklich an der Startposition spielt -> liefert den (lokalen) Startzeitpunkt
-async function waitForStart(song, my, t){
-  const startMs = Math.round((song.start || 0) * 1000), until = Date.now() + 10000;
+async function waitForStart(song, my, timeoutMs){
+  const startMs = Math.round((song.start || 0) * 1000), until = Date.now() + timeoutMs;
   while (Date.now() < until){
     if (my !== session) return null;
     try{
@@ -401,7 +430,13 @@ async function waitForStart(song, my, t){
     }catch(e){}
     await sleep(250);
   }
-  return Date.now();
+  return false;   // Spotify hat (noch) nicht angefangen zu spielen
+}
+function sendPlay(song, devId){
+  return api("/me/player/play?device_id=" + encodeURIComponent(devId), {
+    method: "PUT",
+    body: JSON.stringify({uris: ["spotify:track:" + song.track], position_ms: Math.round((song.start || 0) * 1000)})
+  });
 }
 
 async function play(song){
@@ -425,17 +460,32 @@ async function play(song){
     }
     if (my !== session) return;
 
-    await api("/me/player/play?device_id=" + encodeURIComponent(d.id), {
-      method: "PUT",
-      body: JSON.stringify({uris: ["spotify:track:" + song.track], position_ms: Math.round((song.start || 0) * 1000)})
-    });
+    dlog("▶ Start: " + (song.title || song.track) + " auf " + d.name + (fade ? " (mit Fade)" : " (ohne Fade)"));
+    await sendPlay(song, d.id);
     if (my !== session){
       if (!cur) cleanupAfterStop(d.id);   // wurde während des Startens gestoppt
       return;
     }
 
-    const t0 = await waitForStart(song, my);
+    let t0 = await waitForStart(song, my, 6000);
+    if (t0 === false && my === session){
+      // Spotify hat den Befehl angenommen, spielt aber nicht -> Handy explizit aktivieren und nochmal
+      dlog("Spielt nicht – aktiviere Handy und versuche es erneut");
+      await api("/me/player", {method: "PUT", body: JSON.stringify({device_ids: [d.id], play: false})}).catch(() => {});
+      await sleep(700);
+      if (my !== session) return;
+      await sendPlay(song, d.id);
+      t0 = await waitForStart(song, my, 7000);
+    }
     if (t0 == null || my !== session) return;
+    if (t0 === false){
+      cur = null; setActive(null);
+      if (fade && restoreVol != null) setVol(d.id, restoreVol).then(() => setRestore(null)).catch(() => {});
+      dlog("Abbruch: Spotify startet nicht");
+      toast("Spotify auf dem Handy reagiert nicht. Öffne Spotify kurz (App muss im Hintergrund laufen) und tippe dann nochmal.", 8000,
+            {label: "Spotify öffnen", fn: openSpotify});
+      return;
+    }
     const elapsed = Date.now() - t0;
     cur = {song, dev: d.id, fade, target, fs};
     setActive(song, "playing", elapsed);
@@ -667,6 +717,18 @@ $("importFile").onchange = async e => {
   }catch(err){ toast("Datei konnte nicht gelesen werden."); }
   e.target.value = "";
 };
+
+/* ---------- Diagnose ---------- */
+function showDiag(){
+  $("diagText").textContent = (diag.length ? diag.slice().reverse().join("\n") : "Noch nichts passiert.") +
+    "\n\n— Browser: " + navigator.userAgent;
+}
+$("diagBtn").onclick = () => { $("setDlg").close(); showDiag(); $("diagDlg").showModal(); };
+$("diagDevices").onclick = async () => { try{ await getDevices(); await api("/me/player"); }catch(e){} showDiag(); };
+$("diagCopy").onclick = async () => {
+  try{ await navigator.clipboard.writeText($("diagText").textContent); toast("Kopiert ✓"); }catch(e){ toast("Kopieren nicht möglich – Screenshot machen."); }
+};
+$("diagClose").onclick = () => $("diagDlg").close();
 
 /* ---------- Start ---------- */
 $("settingsBtn").onclick = openSettings;
