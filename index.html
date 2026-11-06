@@ -467,15 +467,34 @@ async function play(song){
     if (my !== session) return;
 
     dlog("▶ Start: " + (song.title || song.track) + " auf " + d.name + (fade ? " (mit Fade)" : " (ohne Fade)"));
-    try{ await sendPlay(song, d.id); }
-    catch(e){
-      if (d.id && (e.status === 404 || e.reason === "NO_ACTIVE_DEVICE")){
-        dlog("Handy-ID abgelehnt – versuche ohne Geräte-ID");
-        if (fade && restoreVol != null){ await setVol(d.id, restoreVol).catch(() => {}); setRestore(null); }
-        fade = false; d = {id: null, name: "zuletzt aktives Gerät", supports_volume: false};
-        await sendPlay(song, null);
-      } else throw e;
+    // Startbefehl mit Wiederholungen: ein eingeschlafenes iPhone antwortet oft erst beim 2./3. Versuch
+    let ok = false, lastErr = null;
+    const dropFade = async () => {
+      if (fade && d.id && restoreVol != null){ await setVol(d.id, restoreVol).catch(() => {}); setRestore(null); }
+      fade = false;
+    };
+    for (let attempt = 1; attempt <= 6 && my === session; attempt++){
+      try{ await sendPlay(song, d.id); ok = true; break; }
+      catch(e){
+        lastErr = e;
+        if (e.noauth) throw e;
+        if (e.status === 404 || e.reason === "NO_ACTIVE_DEVICE"){
+          const fresh = await findPhone().catch(() => null);
+          if (fresh && fresh.id && fresh.id !== d.id){
+            dlog("Handy hat neue ID – Versuch " + attempt); await dropFade(); d = fresh;
+          } else if (d.id){
+            dlog("Handy-ID abgelehnt – versuche ohne Geräte-ID"); await dropFade();
+            d = {id: null, name: "zuletzt aktives Gerät", supports_volume: false};
+          } else {
+            dlog("Kein aktives Gerät – warte und versuche erneut (" + attempt + ")"); await sleep(1500);
+          }
+        } else if (e.status >= 500 || e.status === 429){
+          dlog("Spotify " + e.status + " (Handy wacht vermutlich noch auf) – Versuch " + attempt);
+          await sleep(600 + attempt * 600);
+        } else throw e;
+      }
     }
+    if (!ok){ if (my !== session) return; throw lastErr; }
     if (my !== session){
       if (!cur) cleanupAfterStop(d.id);   // wurde während des Startens gestoppt
       return;
@@ -515,6 +534,8 @@ async function play(song){
     if (restoreVol != null && phone) setVol(phone.id, restoreVol).then(() => setRestore(null)).catch(() => {});
     if (e.noauth) return;
     if (e.status === 404 || e.reason === "NO_ACTIVE_DEVICE") noPhone();
+    else if (e.status >= 500) toast("Spotify erreicht dein Handy gerade nicht. Öffne Spotify, starte kurz einen Song, pausiere ihn, komm zurück und tippe nochmal.", 8000,
+                                   {label: "Spotify öffnen", fn: openSpotify});
     else if (e.status === 403) toast("Spotify blockt: " + e.message + " (Premium-Account verbunden?)", 5000);
     else toast("Fehler: " + e.message, 4500);
   }
