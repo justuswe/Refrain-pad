@@ -32,6 +32,9 @@ header h1{font-size:20px;margin:0;flex:1;letter-spacing:-.3px}
 .tile .t{font-weight:700;font-size:16px;line-height:1.2;overflow:hidden;display:-webkit-box;
   -webkit-line-clamp:2;-webkit-box-orient:vertical}
 .tile .a{font-size:12px;opacity:.85;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .p{align-self:flex-start;max-width:100%;margin-top:7px;background:rgba(0,0,0,.35);border-radius:999px;
+  padding:3px 10px;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.hasp{height:142px}
 .tile .m{position:absolute;top:12px;left:14px;font-size:11px;opacity:.85;font-variant-numeric:tabular-nums}
 .tile .m.warn{background:rgba(0,0,0,.35);padding:2px 7px;border-radius:999px;opacity:1}
 .tile .edit{position:absolute;top:6px;right:6px;width:32px;height:32px;border-radius:50%;border:none;
@@ -116,6 +119,9 @@ input[type=checkbox]{width:22px;height:22px;accent-color:var(--accent);margin:0}
     <div><label>Start (m:ss)</label><input id="fStart" placeholder="1:02" inputmode="decimal"></div>
     <div><label>Dauer (Sek., 0 = bis Ende)</label><input id="fDur" placeholder="30" inputmode="numeric"></div>
   </div>
+  <label>🎤 Person (wer singt)</label>
+  <input id="fPerson" placeholder="z. B. Max" list="people" autocomplete="off">
+  <datalist id="people"></datalist>
   <label>Titel</label>
   <input id="fTitle" placeholder="Songname">
   <label>Interpret</label>
@@ -405,16 +411,18 @@ function render(){
     g.innerHTML = '<div class="empty"><b>Noch keine Songs.</b><br>Tippe unten rechts auf <b>+</b> und wähle deine MP3s aus<br>(z. B. aus der Dateien-App).<br><br>Die Dateien bleiben nur auf diesem Handy.</div>';
     return;
   }
+  const anyP = S.songs.some(x => x.person);
   g.innerHTML = S.songs.map(s => {
     const unset = !s.startSet;
     const meta = unset ? "Start setzen ✎" : fmtTime(s.start) + (s.dur > 0 ? " · " + s.dur + "s" : "");
     return `
-    <div class="tile${present.has(s.id) ? "" : " missing"}" data-id="${esc(s.id)}"
+    <div class="tile${present.has(s.id) ? "" : " missing"}${anyP ? " hasp" : ""}" data-id="${esc(s.id)}"
          style="background:linear-gradient(145deg, ${esc(s.color)}, ${esc(s.color)}aa)">
       <div class="m${unset ? " warn" : ""}">${meta}</div>
       <button class="edit" data-edit="${esc(s.id)}" aria-label="Bearbeiten">✎</button>
       <div class="t">${esc(s.title || "Ohne Titel")}</div>
       ${s.artist ? `<div class="a">${esc(s.artist)}</div>` : ""}
+      ${s.person ? `<div class="p">🎤 ${esc(s.person)}</div>` : ""}
       <div class="bar"></div>
     </div>`;
   }).join("");
@@ -504,6 +512,9 @@ function openEdit(id){
   editId = id;
   $("fTitle").value = s.title || "";
   $("fArtist").value = s.artist || "";
+  $("fPerson").value = s.person || "";
+  const names = [...new Set(S.songs.map(x => x.person).filter(Boolean))].sort((a, b) => a.localeCompare(b, "de"));
+  $("people").innerHTML = names.map(n => `<option value="${esc(n)}">`).join("");
   $("fStart").value = fmtTime(s.start);
   $("fDur").value = s.dur;
   editColor = s.color; drawSwatches();
@@ -516,6 +527,7 @@ function formValues(){
   return {
     title: $("fTitle").value.trim(),
     artist: $("fArtist").value.trim(),
+    person: $("fPerson").value.trim(),
     start: parseTime($("fStart").value),
     dur: Math.max(0, parseInt($("fDur").value, 10) || 0),
     color: editColor
