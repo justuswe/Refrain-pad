@@ -433,6 +433,39 @@ async function waitForStart(song, my, timeoutMs){
   return false;   // Spotify hat (noch) nicht angefangen zu spielen
 }
 const pauseUrl = id => "/me/player/pause" + (id ? "?device_id=" + encodeURIComponent(id) : "");
+const qDev = id => id ? "?device_id=" + encodeURIComponent(id) : "";
+const aDev = id => id ? "&device_id=" + encodeURIComponent(id) : "";
+const trackUri = song => "spotify:track:" + song.track;
+const startMs = song => Math.round((song.start || 0) * 1000);
+// wartet, bis der gewünschte Song geladen ist (für Methoden mit nachträglichem Spulen)
+async function waitTrack(song, ms){
+  const until = Date.now() + ms;
+  while (Date.now() < until){
+    try{ const p = await api("/me/player"); if (p && p.item && p.item.id === song.track) return true; }catch(e){}
+    await sleep(300);
+  }
+  return false;
+}
+async function seekTo(song, id){
+  await api("/me/player/seek?position_ms=" + startMs(song) + aDev(id), {method: "PUT"});
+}
+const METHODS = [
+  {name: "A (Play mit Startposition)", run: (song, id) => sendPlay(song, id)},
+  {name: "B (Play, dann spulen)", run: async (song, id) => {
+    await api("/me/player/play" + qDev(id), {method: "PUT", body: JSON.stringify({uris: [trackUri(song)]})});
+    if (await waitTrack(song, 6000)) await seekTo(song, id);
+  }},
+  {name: "C (Warteschlange + Weiter, dann spulen)", run: async (song, id) => {
+    await api("/me/player/queue?uri=" + encodeURIComponent(trackUri(song)) + aDev(id), {method: "POST"});
+    await sleep(600);
+    await api("/me/player/next" + qDev(id), {method: "POST"});
+    if (await waitTrack(song, 6000)) await seekTo(song, id);
+  }}
+];
+function methodOrder(){
+  const m = LS.get("rp_method", 0);
+  return [m, ...[0, 1, 2].filter(x => x !== m)];
+}
 function sendPlay(song, devId){
   return api("/me/player/play" + (devId ? "?device_id=" + encodeURIComponent(devId) : ""), {
     method: "PUT",
@@ -473,8 +506,10 @@ async function play(song){
       if (fade && d.id && restoreVol != null){ await setVol(d.id, restoreVol).catch(() => {}); setRestore(null); }
       fade = false;
     };
+    const order = methodOrder();
+    dlog("Methode " + METHODS[order[0]].name);
     for (let attempt = 1; attempt <= 6 && my === session; attempt++){
-      try{ await sendPlay(song, d.id); ok = true; break; }
+      try{ await METHODS[order[0]].run(song, d.id); ok = true; break; }
       catch(e){
         lastErr = e;
         if (e.noauth) throw e;
@@ -501,14 +536,15 @@ async function play(song){
     }
 
     let t0 = await waitForStart(song, my, 6000);
-    if (t0 === false && my === session && d.id){
-      // Spotify hat den Befehl angenommen, spielt aber nicht -> Handy explizit aktivieren und nochmal
-      dlog("Spielt nicht – aktiviere Handy und versuche es erneut");
-      await api("/me/player", {method: "PUT", body: JSON.stringify({device_ids: [d.id], play: false})}).catch(() => {});
-      await sleep(700);
+    // Befehl angenommen, aber es spielt nichts -> andere Startmethoden durchprobieren
+    for (const mi of order.slice(1)){
+      if (t0 !== false || my !== session) break;
+      dlog("Spielt nicht – probiere Methode " + METHODS[mi].name);
+      try{ await METHODS[mi].run(song, d.id); }
+      catch(e){ dlog("Methode " + METHODS[mi].name + " Fehler: " + (e.status || "") + " " + e.message); continue; }
       if (my !== session) return;
-      await sendPlay(song, d.id);
-      t0 = await waitForStart(song, my, 7000);
+      t0 = await waitForStart(song, my, 6000);
+      if (t0 !== false && t0 != null){ LS.set("rp_method", mi); dlog("✓ Methode " + METHODS[mi].name + " funktioniert – wird ab jetzt zuerst genutzt"); }
     }
     if (t0 == null || my !== session) return;
     if (t0 === false){
